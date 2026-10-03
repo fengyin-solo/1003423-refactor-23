@@ -14,6 +14,7 @@
 ├── frontend/                 Vue 3 + Vite + TypeScript 前端（唯一运行单元）
 │   ├── src/views/            每个业务模块一个页面
 │   ├── src/api/local-service.ts   本地数据服务：列表、筛选、动作流转、导出
+│   ├── src/domain/           领域逻辑（瞭望台统一状态机、旧记录迁移、装备台账联动）
 │   ├── src/data/             模块元数据 / 示例数据 / localStorage 持久化
 │   ├── src/stores/           会话与筛选状态
 │   └── vite.config.ts        dev server 配置（open: false，无 /api 代理）
@@ -68,4 +69,9 @@ npm run build
 - 字段、状态、动作与流转目标集中在 `frontend/src/data/modules.ts`；示例数据在
   `frontend/src/data/seed.ts`。
 - 状态流转只允许在 `local-service.ts` 里改，页面组件不做业务判断。
+- 瞭望台模块例外且更严格：运行状态收口在 `src/domain/lookout/state-machine.ts`
+  的统一状态机（合法流转表、待处理/异常口径、统计口径都是同一份定义）；
+  旧版平铺记录在启动时按 `stateVersion` 迁移，迁移事件进入每座台的交接记录时间线（只增不删）；
+  故障/维修/关闭期间装备自动进入「装备待归还台账」，恢复值守后自动销账；
+  动作落地带 `rowVersion` 乐观锁，两个动作并发改同一座台时只有合法路径能提交。
 - 想回到初始数据：清掉浏览器里 `forest-fire-patrol:entries` 这一项，或调用 `resetModule(模块)`。

@@ -1,6 +1,12 @@
 import { MODULE_BY_KEY } from '@/data/modules'
-import { allRows, listRows, resetRows, saveRows } from '@/data/local-store'
+import { allRows, getCollection, listRows, resetRows, saveRows } from '@/data/local-store'
 import type { ActionResult, EntryRow, ModuleMeta, OverviewResult, PageResult } from '@/data/types'
+import { RETURNS_COLLECTION } from '@/domain/lookout/equipment-returns'
+import { runLookoutAction } from '@/domain/lookout/service'
+import type { EquipmentReturnEntry } from '@/domain/lookout/types'
+
+// 瞭望台动作走统一状态机，不再使用通用的「直接写目标状态」逻辑。
+const LOOKOUT_MODULE_KEY = 'lookout'
 
 // 会写进数据的「往回走」动作：命中就把这条记录标成异常态，看板上能一眼看出来。
 const NEGATIVE_ACTIONS = ['撤销', '作废', '拒绝', '驳回', '停用', '忽略', '下线', '回滚']
@@ -28,7 +34,21 @@ export function listEntries(key: string, filters: Record<string, string> = {}): 
   return { items: matched, total: matched.length, page: 1, size: matched.length }
 }
 
-export function runAction(key: string, id: number, action: string): ActionResult {
+export type RunActionOptions = {
+  expectedVersion?: number
+}
+
+export function runAction(
+  key: string,
+  id: number,
+  action: string,
+  options: RunActionOptions = {},
+): ActionResult {
+  // 瞭望台：值班 / 故障 / 恢复全部收口到统一状态机（含合法路径、CAS、台账联动）。
+  if (key === LOOKOUT_MODULE_KEY) {
+    return runLookoutAction({ id, action, expectedVersion: options.expectedVersion })
+  }
+
   const meta = moduleMeta(key)
   const target = meta.actionTargets[action]
   if (!target) {
@@ -59,6 +79,11 @@ export function runAction(key: string, id: number, action: string): ActionResult
 export function resetModule(key: string): PageResult {
   resetRows(key)
   return listEntries(key)
+}
+
+// 装备待归还台账：由瞭望台状态机事务联动维护，装备模块只读展示。
+export function listEquipmentReturns(): EquipmentReturnEntry[] {
+  return getCollection<EquipmentReturnEntry>(RETURNS_COLLECTION)
 }
 
 export function exportEntries(key: string): { filename: string; content: string } {

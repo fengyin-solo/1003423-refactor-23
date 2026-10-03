@@ -24,6 +24,35 @@
       </span>
     </p>
 
+    <h3 class="ledger-title">装备待归还台账（随瞭望台运行状态联动）</h3>
+    <table class="data-table ledger-table">
+      <thead>
+        <tr>
+          <th>装备编号</th>
+          <th>所属瞭望台</th>
+          <th>所在山头</th>
+          <th>登记原因</th>
+          <th>登记时间</th>
+          <th>台账状态</th>
+          <th>核销时间</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr v-for="item in returnLedger" :key="item.id">
+          <td>{{ item.装备编号 }}</td>
+          <td>{{ item.瞭望台编号 }}</td>
+          <td>{{ item.所在山头 }}</td>
+          <td>{{ item.登记原因 }}</td>
+          <td>{{ item.登记时间 }}</td>
+          <td :class="item.status === '待归还' ? 'return-open' : 'return-done'">{{ item.status }}</td>
+          <td>{{ item.核销时间 ?? '—' }}</td>
+        </tr>
+        <tr v-if="!returnLedger.length">
+          <td colspan="7" class="empty-state">暂无待归还记录：瞭望台故障、维修或临时关闭时会自动挂账，恢复值守后自动销账</td>
+        </tr>
+      </tbody>
+    </table>
+
     <form class="filter-bar" @submit.prevent="reload">
       <label v-for="field in filterFields" :key="field" class="filter-item">
         <span>{{ field }}</span>
@@ -76,22 +105,38 @@ import { computed, onMounted, ref } from 'vue'
 import {
   downloadEntries,
   listEntries,
+  listEquipmentReturns,
   moduleMeta,
   runAction as applyAction,
 } from '@/api/local-service'
+import type { EquipmentReturnEntry } from '@/domain/lookout/types'
 import type { EntryRow } from '@/data/types'
 
 const meta = moduleMeta('equipment')
 const columns = ["装备编号", "装备名称", "装备类型", "规格型号", "保管林场", "购入日期", "最近检修日", "装备状态"]
 const actions = ["领用装备", "送检登记", "报废装备"]
 const statuses = ["可用", "已领用", "待检修", "已报废"]
-const stats = [{"label": "装备总数", "value": 0}, {"label": "可用装备", "value": 0}, {"label": "待检修数", "value": 0}]
+const staticStats = [{"label": "装备总数", "value": 0}, {"label": "可用装备", "value": 0}, {"label": "待检修数", "value": 0}]
 
 const rows = ref<EntryRow[]>([])
 const total = ref(0)
+const returnLedger = ref<EquipmentReturnEntry[]>([])
 const errorMessage = ref('')
 const filters = ref<Record<string, string>>({})
 const filterFields = columns.slice(0, 3)
+
+// 待归还数来自瞭望台联动台账，装备页第一时间能看到要追回哪些装备。
+const stats = computed(() => [
+  ...staticStats.map((card) => ({
+    ...card,
+    value: card.label === '装备总数'
+      ? rows.value.length
+      : card.label === '可用装备'
+        ? rows.value.filter((row) => String(row.status) === '可用').length
+        : rows.value.filter((row) => String(row.status) === '待检修').length,
+  })),
+  { label: '待归还装备', value: returnLedger.value.filter((item) => item.status === '待归还').length },
+])
 const statusSummary = computed(() =>
   statuses.map((status: string) => ({
     status,
@@ -128,10 +173,21 @@ function reload() {
     const payload = listEntries(meta.key, filters.value)
     rows.value = payload.items
     total.value = payload.total
+    returnLedger.value = listEquipmentReturns()
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : '消防装备列表读取失败'
   }
 }
 
-onMounted(reload)
+onMounted(() => {
+  reload()
+  window.addEventListener('storage', reload)
+})
 </script>
+
+<style scoped>
+.ledger-title { font-size: 14px; margin: 4px 0 8px; }
+.ledger-table { margin-bottom: 16px; }
+.return-open { color: #b42318; font-weight: 600; }
+.return-done { color: #166534; }
+</style>
