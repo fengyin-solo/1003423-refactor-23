@@ -1,5 +1,6 @@
 import { MODULE_BY_KEY } from '@/data/modules'
 import { allRows, listRows, resetRows, saveRows } from '@/data/local-store'
+import { LOOKOUT_MODULE_KEY } from '@/domain/lookout/lifecycle'
 import type { ActionResult, EntryRow, ModuleMeta, OverviewResult, PageResult } from '@/data/types'
 
 // 会写进数据的「往回走」动作：命中就把这条记录标成异常态，看板上能一眼看出来。
@@ -29,6 +30,11 @@ export function listEntries(key: string, filters: Record<string, string> = {}): 
 }
 
 export function runAction(key: string, id: number, action: string): ActionResult {
+  // 瞭望台状态流转已收口到统一状态机（api/lookout-service.ts），通用入口不再受理，
+  // 防止绕过合法迁移表、交接档案与并发校验的另一条写入路径。
+  if (key === LOOKOUT_MODULE_KEY) {
+    return { ok: false, message: '瞭望台状态流转已统一收口，请从瞭望台页面操作' }
+  }
   const meta = moduleMeta(key)
   const target = meta.actionTargets[action]
   if (!target) {

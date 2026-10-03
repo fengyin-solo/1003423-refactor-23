@@ -14,7 +14,9 @@
 ├── frontend/                 Vue 3 + Vite + TypeScript 前端（唯一运行单元）
 │   ├── src/views/            每个业务模块一个页面
 │   ├── src/api/local-service.ts   本地数据服务：列表、筛选、动作流转、导出
-│   ├── src/data/             模块元数据 / 示例数据 / localStorage 持久化
+│   ├── src/api/lookout-service.ts 瞭望台状态流转统一入口（锁 + 事务 + 交接档案 + 台账联动）
+│   ├── src/domain/lookout/   瞭望台运行状态机：状态/动作/合法迁移/统计口径的唯一事实来源
+│   ├── src/data/             模块元数据 / 示例数据 / 版本化迁移 / localStorage 持久化
 │   ├── src/stores/           会话与筛选状态
 │   └── vite.config.ts        dev server 配置（open: false，无 /api 代理）
 ├── .gitignore
@@ -68,4 +70,14 @@ npm run build
 - 字段、状态、动作与流转目标集中在 `frontend/src/data/modules.ts`；示例数据在
   `frontend/src/data/seed.ts`。
 - 状态流转只允许在 `local-service.ts` 里改，页面组件不做业务判断。
+- **瞭望台例外**：瞭望台运行状态有独立状态机 `frontend/src/domain/lookout/lifecycle.ts`
+  （状态、动作、合法迁移表、统计口径只在这一处定义，恢复必须经「维修中 → 确认恢复」），
+  流转统一走 `frontend/src/api/lookout-service.ts`；通用 `runAction` 已拒收瞭望台。
+- 存储结构带版本号：v1 是纯 entries 表，v2 起是 `{ version, entries, lookoutHandover }`。
+  旧格式数据首次读取时由 `frontend/src/data/migrations.ts` 自动迁移（幂等），迁移会为每座
+  瞭望台补建交接档案并对齐装备待归还台账。
+- 瞭望台每次合法流转都在同一个事务里完成三件事：更新行（`revision` +1）、追加交接档案
+  （只增不改）、联动装备模块的「待归还」台账（进入故障/关闭/维修挂账，恢复值守核销）。
+- 并发：每座瞭望台一把锁（Web Locks，不可用时退化为页内队列）+ 行级 `revision` 乐观校验；
+  两个动作同时改同一座台时，基于过期快照的动作会被拒绝，只有合法路径能落地。
 - 想回到初始数据：清掉浏览器里 `forest-fire-patrol:entries` 这一项，或调用 `resetModule(模块)`。

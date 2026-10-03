@@ -47,14 +47,16 @@
           <td>{{ row.status }}</td>
           <td class="row-actions">
             <button
-              v-for="action in actions"
+              v-for="action in rowActions(row)"
               :key="action"
               class="link"
               type="button"
+              :disabled="pendingAction !== ''"
               @click="runAction(action, row)"
             >
               {{ action }}
             </button>
+            <button class="link" type="button" @click="openHandover(row)">交接记录</button>
           </td>
         </tr>
         <tr v-if="!rows.length">
@@ -63,8 +65,42 @@
       </tbody>
     </table>
 
+    <section v-if="selectedTower" class="panel-block">
+      <h3 class="panel-title">
+        交接记录 · {{ selectedTower['瞭望台编号'] }}（{{ selectedTower['所在山头'] }}）
+      </h3>
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>序号</th>
+            <th>时间</th>
+            <th>动作</th>
+            <th>原状态</th>
+            <th>新状态</th>
+            <th>操作人</th>
+            <th>备注</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="record in handover" :key="record.seq">
+            <td>{{ record.seq }}</td>
+            <td>{{ formatTime(record.at) }}</td>
+            <td>{{ record.action }}</td>
+            <td>{{ record.fromStatus }}</td>
+            <td>{{ record.toStatus }}</td>
+            <td>{{ record.operator }}</td>
+            <td>{{ record.note }}</td>
+          </tr>
+          <tr v-if="!handover.length">
+            <td colspan="7" class="empty-state">暂无交接记录</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
     <footer class="page-foot">
       <span>共 {{ total }} 条瞭望台管理记录</span>
+      <span v-if="notice" class="ok-text">{{ notice }}</span>
       <span v-if="errorMessage" class="error-text">{{ errorMessage }}</span>
     </footer>
   </section>
@@ -77,27 +113,47 @@ import {
   downloadEntries,
   listEntries,
   moduleMeta,
-  runAction as applyAction,
 } from '@/api/local-service'
-import type { EntryRow } from '@/data/types'
+import { applyLookoutTransition, listLookoutHandover } from '@/api/lookout-service'
+import {
+  LOOKOUT_STATES,
+  availableActions,
+  normalizeLookoutState,
+  summarizeLookouts,
+} from '@/domain/lookout/lifecycle'
+import { useSessionStore } from '@/stores/session'
+import type { EntryRow, HandoverRecord } from '@/data/types'
 
 const meta = moduleMeta('lookout')
+const store = useSessionStore()
 const columns = ["瞭望台编号", "所在山头", "海拔高度", "视野覆盖面积", "瞭望员", "通讯方式", "设备配置", "运行状态"]
-const actions = ["记录值守", "登记故障", "关闭瞭望台"]
-const statuses = ["正常值守", "临时关闭", "设备故障", "维修中"]
-const stats = [{"label": "瞭望台总数", "value": 0}, {"label": "正常值守数", "value": 0}, {"label": "故障台数", "value": 0}]
 
 const rows = ref<EntryRow[]>([])
 const total = ref(0)
 const errorMessage = ref('')
+const notice = ref('')
 const filters = ref<Record<string, string>>({})
 const filterFields = columns.slice(0, 3)
+// 正在落地的动作（"行id:动作"），落地期间禁用所有动作按钮，防止连点产生并发写
+const pendingAction = ref('')
+
+const selectedId = ref<number | null>(null)
+const handover = ref<HandoverRecord[]>([])
+
+// 统计口径统一从状态机派生：故障台数含维修中，恢复条件只维护一份
+const summary = computed(() => summarizeLookouts(rows.value))
+const stats = computed(() => summary.value.metrics)
 const statusSummary = computed(() =>
-  statuses.map((status: string) => ({
-    status,
-    count: rows.value.filter((row) => String(row.status) === status).length,
-  })),
+  LOOKOUT_STATES.map((status) => ({ status, count: summary.value.byStatus[status] })),
 )
+const selectedTower = computed(
+  () => rows.value.find((row) => Number(row.id) === selectedId.value) ?? null,
+)
+
+function rowActions(row: EntryRow) {
+  const state = normalizeLookoutState(row.status)
+  return state ? availableActions(state) : []
+}
 
 function resetFilters() {
   filters.value = {}
@@ -112,14 +168,42 @@ function openCreate() {
   errorMessage.value = '瞭望台登记入口尚未接入审批流'
 }
 
-function runAction(action: string, row: EntryRow) {
-  errorMessage.value = ''
-  const result = applyAction(meta.key, Number(row.id), action)
-  if (!result.ok) {
-    errorMessage.value = result.message
+function openHandover(row: EntryRow) {
+  selectedId.value = Number(row.id)
+  handover.value = listLookoutHandover(selectedId.value)
+}
+
+function formatTime(iso: string) {
+  const time = new Date(iso)
+  return Number.isNaN(time.getTime()) ? iso : time.toLocaleString('zh-CN', { hour12: false })
+}
+
+async function runAction(action: string, row: EntryRow) {
+  if (pendingAction.value) {
     return
   }
-  reload()
+  pendingAction.value = `${String(row.id)}:${action}`
+  errorMessage.value = ''
+  notice.value = ''
+  try {
+    const result = await applyLookoutTransition({
+      id: Number(row.id),
+      action,
+      expectedRevision: Number(row.revision ?? 0),
+      operator: store.operator,
+    })
+    if (!result.ok) {
+      errorMessage.value = result.message
+      return
+    }
+    notice.value = result.message
+    reload()
+    if (selectedId.value !== null) {
+      handover.value = listLookoutHandover(selectedId.value)
+    }
+  } finally {
+    pendingAction.value = ''
+  }
 }
 
 function reload() {

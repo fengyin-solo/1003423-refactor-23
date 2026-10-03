@@ -44,7 +44,10 @@
       <tbody>
         <tr v-for="row in rows" :key="String(row.id)">
           <td v-for="column in columns" :key="column">{{ row[column] ?? '—' }}</td>
-          <td>{{ row.status }}</td>
+          <td>
+            {{ row.status }}
+            <span v-if="row['待归还']" class="badge">待归还</span>
+          </td>
           <td class="row-actions">
             <button
               v-for="action in actions"
@@ -62,6 +65,36 @@
         </tr>
       </tbody>
     </table>
+
+    <section class="panel-block">
+      <h3 class="panel-title">装备待归还台账</h3>
+      <p class="page-desc">
+        配属瞭望台进入临时关闭、设备故障或维修中时，名下已领用装备自动挂账；瞭望台恢复值守后自动核销。
+      </p>
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>装备编号</th>
+            <th>装备名称</th>
+            <th>配属瞭望台</th>
+            <th>装备状态</th>
+            <th>保管林场</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="item in pendingReturns" :key="String(item.id)">
+            <td>{{ item['装备编号'] }}</td>
+            <td>{{ item['装备名称'] }}</td>
+            <td>{{ item['配属瞭望台'] }}</td>
+            <td>{{ item.status }}</td>
+            <td>{{ item['保管林场'] }}</td>
+          </tr>
+          <tr v-if="!pendingReturns.length">
+            <td colspan="5" class="empty-state">当前没有待归还装备</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
 
     <footer class="page-foot">
       <span>共 {{ total }} 条消防装备记录</span>
@@ -82,12 +115,13 @@ import {
 import type { EntryRow } from '@/data/types'
 
 const meta = moduleMeta('equipment')
-const columns = ["装备编号", "装备名称", "装备类型", "规格型号", "保管林场", "购入日期", "最近检修日", "装备状态"]
+const columns = ["装备编号", "装备名称", "装备类型", "规格型号", "保管林场", "配属瞭望台", "购入日期", "最近检修日", "装备状态"]
 const actions = ["领用装备", "送检登记", "报废装备"]
 const statuses = ["可用", "已领用", "待检修", "已报废"]
 const stats = [{"label": "装备总数", "value": 0}, {"label": "可用装备", "value": 0}, {"label": "待检修数", "value": 0}]
 
 const rows = ref<EntryRow[]>([])
+const ledgerRows = ref<EntryRow[]>([])
 const total = ref(0)
 const errorMessage = ref('')
 const filters = ref<Record<string, string>>({})
@@ -98,6 +132,8 @@ const statusSummary = computed(() =>
     count: rows.value.filter((row) => String(row.status) === status).length,
   })),
 )
+// 待归还台账不受筛选条件影响，始终按全量装备计算
+const pendingReturns = computed(() => ledgerRows.value.filter((row) => row['待归还'] === true))
 
 function resetFilters() {
   filters.value = {}
@@ -128,6 +164,7 @@ function reload() {
     const payload = listEntries(meta.key, filters.value)
     rows.value = payload.items
     total.value = payload.total
+    ledgerRows.value = listEntries(meta.key).items
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : '消防装备列表读取失败'
   }
